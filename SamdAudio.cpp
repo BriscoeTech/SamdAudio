@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2016 Théo Meyer aka AloyseTech. All right reserved.
+  Copyright (c) 2016 Thï¿½o Meyer aka AloyseTech. All right reserved.
 
   This library is free software; you can redistribute it and/or
   modify it under the terms of the GNU Lesser General Public
@@ -18,24 +18,33 @@
 
 #include "SamdAudio.h"
 
+//for using flash memory as WAV file storage
+#include <Adafruit_SPIFlash.h>
+#include <Adafruit_SPIFlash_FatFs.h>
+extern Adafruit_W25Q16BV_FatFs memory;
+
+//for using SD card as WAV file storage
+//#include <SdFat.h>
+//extern SdFat memory;
+
 //*********************************************************************
 //Global variables
 File __audioFile[MAX_N_CHANNELS];
 volatile bool __audioPlaying[MAX_N_CHANNELS]={false};
 volatile bool __audioFileReady[MAX_N_CHANNELS] = {false};
 volatile uint32_t __SampleIndex[MAX_N_CHANNELS];
-uint8_t __WavSamples[MAX_N_CHANNELS][2][AUDIO_BUFFER_SIZE];
+uint8_t __WavSamples[MAX_N_CHANNELS][2][MAX_AUDIO_BUFFER_SIZE];
 uint8_t rampDivisor[MAX_N_CHANNELS]={1};
 uint8_t whichBuffer[MAX_N_CHANNELS]={0};
 volatile bool fillNextBuffer[MAX_N_CHANNELS]={true};
 volatile uint16_t __audioData;
 
-SdFat SamdAudioSdFat;
 
 int __Volume;
 bool __criticalSection = false;
 
 int __numOfChannelsUsed = 4;
+int __audioBufferSize = 1024;
 
 // unused declarations, commented out
 void TC5_Handler (void) __attribute__ ((weak, alias("AudioPlay_Handler")));
@@ -45,15 +54,10 @@ void TC3_Handler (void) __attribute__ ((weak, alias("AudioRead_Handler")));
 //*********************************************************************
 
 
-int SamdAudio::begin(uint32_t sampleRate, uint8_t numOfChannels, uint8_t chipSelect)
+int SamdAudio::begin(uint32_t sampleRate, uint8_t numOfChannels, uint16_t audio_buffer_size)
 {
-    
-	// check if sd card is inserted and ready with no errors
-	if ( !SamdAudioSdFat.begin(chipSelect) )
-	{
-	   //the sd card error was found, exit this function and to not attempt to finish
-	   return -1;
-	}
+  __audioBufferSize = audio_buffer_size;
+
 
 	if(numOfChannels == 1 || numOfChannels == 2 || numOfChannels == 4)
 	{
@@ -65,14 +69,14 @@ int SamdAudio::begin(uint32_t sampleRate, uint8_t numOfChannels, uint8_t chipSel
 		// bad input passed, assume all 4 channels to be safe
 		__numOfChannelsUsed = 4;
 	}
-	
+
 	// initialize arrays
     for(uint8_t index=0; index<MAX_N_CHANNELS; index++)
     {
         __audioFileReady[index]=false;
         __SampleIndex[index]=0;
     }
-    
+
     /*Modules configuration */
     dacConfigure();
     configurePlayerTimer(sampleRate);
@@ -101,44 +105,40 @@ void SamdAudio::stopChannel(uint8_t c)
     }
 }
 
-
 void SamdAudio::play(const char *fname, uint8_t channel) {
-    
+
 	//if(channel<0 || channel>=__numOfChannelsUsed)//unsigned, cant be negative
     if(channel>=__numOfChannelsUsed)
         return;
-    
+
     disableReaderTimer();
-    
-    
-    
     if(__audioFileReady[channel])
         __audioFile[channel].close();
-    __audioFile[channel] = SamdAudioSdFat.open(fname);
+    __audioFile[channel] = memory.open(fname);
     if(!__audioFile[channel]){
         //end();
         //SerialUSB.println("Error opening file");
         return;
     }
-    
-    
+
+
     whichBuffer[channel]=0;
     fillNextBuffer[channel]=1;
-    
-    __audioFile[channel].read(__WavSamples[channel][whichBuffer[channel]], AUDIO_BUFFER_SIZE);
-    
+
+    __audioFile[channel].read(__WavSamples[channel][whichBuffer[channel]], __audioBufferSize);
+
     __SampleIndex[channel]=0;
     __audioFileReady[channel] = true;
-    
+
     rampDivisor[channel]=RAMPIN;
-    
+
     /*once the buffer is filled for the first time the counter can be started*/
     if(alonePlaying(channel))
     {
         enablePlayerTimer();
     }
     __audioPlaying[channel]=true;
-    
+
     enableReaderTimer();
 }
 
@@ -171,7 +171,7 @@ bool __channelsPlaying()
 void SamdAudio::dacConfigure(void){
     analogWriteResolution(10);
     //    analogWrite(A0, 0);
-    
+
     DAC->CTRLA.bit.ENABLE = 0x01;
     DAC->DATA.reg = 0;
     while (DAC->STATUS.bit.SYNCBUSY == 1);
@@ -188,26 +188,26 @@ void SamdAudio::configurePlayerTimer(uint32_t sampleRate)
     // Enable GCLK for TCC2 and TC5 (timer counter input clock)
     GCLK->CLKCTRL.reg = (uint16_t) (GCLK_CLKCTRL_CLKEN | GCLK_CLKCTRL_GEN_GCLK0 | GCLK_CLKCTRL_ID(GCM_TC4_TC5)) ;
     while (GCLK->STATUS.bit.SYNCBUSY);
-    
+
     resetPlayerTimer();
-    
+
     // Set Timer counter Mode to 16 bits
     TC5->COUNT16.CTRLA.reg |= TC_CTRLA_MODE_COUNT16;
-    
+
     // Set TC5 mode as match frequency
     TC5->COUNT16.CTRLA.reg |= TC_CTRLA_WAVEGEN_MFRQ;
-    
+
     TC5->COUNT16.CTRLA.reg |= TC_CTRLA_PRESCALER_DIV1 | TC_CTRLA_ENABLE;
-    
+
     TC5->COUNT16.CC[0].reg = (uint16_t) (SystemCoreClock / sampleRate - 1);
     while (syncPlayerTimer());
-    
+
     // Configure interrupt request
     NVIC_DisableIRQ(TC5_IRQn);
     NVIC_ClearPendingIRQ(TC5_IRQn);
     NVIC_SetPriority(TC5_IRQn, 0);
     NVIC_EnableIRQ(TC5_IRQn);
-    
+
     // Enable the TC5 interrupt request
     TC5->COUNT16.INTENSET.bit.MC0 = 1;
     while (syncPlayerTimer());
@@ -257,11 +257,14 @@ void SamdAudio::configureReaderTimer()
 {
     // The GCLK clock provider to use
     // GCLK0, GCLK1 & GCLK3 are used already, see startup.c
-    const uint8_t GCLK_SRC = 5;
-    
+
+    //GCLK0 ...  freezes serial.. on adafruit M0
+
+    const uint8_t GCLK_SRC = 1; //1 works for Adafruit M0 express
+
     // Configure the XOSC32K to run in standby
     //SYSCTRL->XOSC32K.bit.RUNSTDBY = 1;
-    
+
     // Setup clock provider GCLK_SRC with a /2 source divider
     // GCLK_GENDIV_ID(X) specifies which GCLK we are configuring
     // GCLK_GENDIV_DIV(Y) specifies the clock prescalar / divider
@@ -272,7 +275,7 @@ void SamdAudio::configureReaderTimer()
     while ( GCLK->STATUS.reg & GCLK_STATUS_SYNCBUSY) {
         /* Wait for synchronization */
     }
-    
+
     // Configure the GCLK module
     // GCLK_GENCTRL_GENEN, enable the specific GCLK module
     // GCLK_GENCTRL_SRC_XOSC32K, set the source to the XOSC32K
@@ -287,10 +290,10 @@ void SamdAudio::configureReaderTimer()
     while (GCLK->STATUS.reg & GCLK_STATUS_SYNCBUSY) {
         /* Wait for synchronization */
     }
-    
+
     // Turn the power to the TC3 module on
     PM->APBCMASK.reg |= PM_APBCMASK_TC3;
-    
+
     // Set TC3 (shared with TCC2) GCLK source to GCLK_SRC
     // GCLK_CLKCTRL_CLKEN, enable the generic clock
     // GCLK_CLKCTRL_GEN(X), specifies the GCLK generator source
@@ -301,14 +304,14 @@ void SamdAudio::configureReaderTimer()
     while (GCLK->STATUS.reg & GCLK_STATUS_SYNCBUSY) {
         /* Wait for synchronization */
     }
-    
+
     // Disable TC3. This is required (if enabled already)
     // before setting certain registers
     TC3->COUNT8.CTRLA.reg &= ~TC_CTRLA_ENABLE;
     while (TC3->COUNT8.STATUS.reg & TC_STATUS_SYNCBUSY) {
         /* Wait for synchronization */
     }
-    
+
     // Set the mode to 8 bit and set it to run in standby
     // TC_CTRLA_MODE_COUNT8, specify 8bit mode
     // TC_CTRLA_RUNSTDBY, keep the module running when in standby
@@ -321,22 +324,22 @@ void SamdAudio::configureReaderTimer()
     while (TC3->COUNT8.STATUS.reg & TC_STATUS_SYNCBUSY) {
         /* Wait for synchronization */
     }
-    
+
     // Enable the TC3 interrupt vector
     // Set the priority to second (less important than feeding the DAC
     NVIC_DisableIRQ(TC3_IRQn);
     NVIC_ClearPendingIRQ(TC3_IRQn);
     NVIC_SetPriority(TC3_IRQn, 0xFFFF);
     NVIC_EnableIRQ(TC3_IRQn);
-    
-    
+
+
     // Enable interrupt on overflow
     // TC_INTENSET_OVF, enable an interrupt on overflow
     TC3->COUNT8.INTENSET.reg = TC_INTENSET_OVF;
     while (TC3->COUNT8.STATUS.reg & TC_STATUS_SYNCBUSY) {
         /* Wait for synchronization */
     }
-    
+
     // Enable TC3
     TC3->COUNT8.CTRLA.reg |= TC_CTRLA_ENABLE;
     while (TC3->COUNT8.STATUS.reg & TC_STATUS_SYNCBUSY) {
@@ -369,37 +372,37 @@ void SamdAudio::disableReaderTimer()
 #ifdef __cplusplus
 extern "C" {
 #endif
-    
+
 	// TC5 ISR
     void AudioPlay_Handler (void)
     {
         __audioData=0;
-        
+
         for(uint8_t index=0; index<__numOfChannelsUsed; index++)
         {
             if (__audioPlaying[index])
             {
                 if(__audioFile[index].available())
                 {
-                    if (__SampleIndex[index] < AUDIO_BUFFER_SIZE - 1)
+                    if (__SampleIndex[index] < __audioBufferSize - 1)
                     {
                         __audioData+=__WavSamples[index][whichBuffer[index]][__SampleIndex[index]++]/rampDivisor[index];
-                        
+
                     }
                     else //last sample from buffer
                     {
                         __audioData+=__WavSamples[index][whichBuffer[index]][__SampleIndex[index]++]/rampDivisor[index];
-                        
+
                         __SampleIndex[index] = 0;
                         if(!fillNextBuffer[index]) //we have been able to load next buffer : continue; else, loop the buffer...
                             whichBuffer[index]=1-whichBuffer[index];
                         fillNextBuffer[index]=1;
                     }
-                    
+
                     if(rampDivisor[index]>1)
                         rampDivisor[index]--;
                 }
-            
+
             //end of file, now play ramp out
                 else if (__audioFileReady[index])
                 {
@@ -415,24 +418,24 @@ extern "C" {
                 else
                 {
                     __audioPlaying[index]=false;
-                    
+
                     if(!__channelsPlaying())
                     {
                         //tc disable
                         TC5->COUNT16.CTRLA.reg &= ~TC_CTRLA_ENABLE;
                         while (TC5->COUNT16.STATUS.reg & TC_STATUS_SYNCBUSY);
-                        
+
                         TC3->COUNT8.CTRLA.reg &= ~TC_CTRLA_ENABLE;
                         while (TC3->COUNT8.STATUS.reg & TC_STATUS_SYNCBUSY) {
                             /* Wait for synchronization */
                         }
-                        
+
                     }
                 }
             }
         }
-        
-        
+
+
         if(__channelsPlaying())
         {
 			if(__numOfChannelsUsed == 4 || __numOfChannelsUsed == 3)
@@ -440,7 +443,7 @@ extern "C" {
 				__audioData>>=0;
 			}
 			else if(__numOfChannelsUsed == 2)
-			{	
+			{
 				__audioData<<=1;
 			}
 			else if(__numOfChannelsUsed == 1)
@@ -451,15 +454,15 @@ extern "C" {
             DAC->DATA.reg = __audioData & 0x3FF; // DAC on 10 bits.
             while (DAC->STATUS.bit.SYNCBUSY == 1);
         }
-        
-        
+
+
         // Clear the interrupt
         TC5->COUNT16.INTFLAG.bit.MC0 = 1;
-        
+
     }
-    
-    
-    
+
+
+
     // TC3 ISR
     void AudioRead_Handler()
     {
@@ -471,7 +474,7 @@ extern "C" {
                 {
                     if(__audioFile[index].available() && !__criticalSection && fillNextBuffer[index])
                     {
-                        __audioFile[index].read(__WavSamples[index][1-whichBuffer[index]], AUDIO_BUFFER_SIZE);
+                        __audioFile[index].read(__WavSamples[index][1-whichBuffer[index]], __audioBufferSize);
                         fillNextBuffer[index]=0;
                     }
                 }
@@ -480,7 +483,7 @@ extern "C" {
             TC3->COUNT8.INTFLAG.bit.OVF = 1;
         }
     }
-    
+
 #ifdef __cplusplus
 }
 #endif

@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2016 Théo Meyer aka AloyseTech. All right reserved.
+  Copyright (c) 2016 Thï¿½o Meyer aka AloyseTech. All right reserved.
 
   This library is free software; you can redistribute it and/or
   modify it under the terms of the GNU Lesser General Public
@@ -15,26 +15,23 @@
   License along with this library; if not, write to the Free Software
   Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 */
-	
+
 #ifndef SAMDAUDIO_H
 #define SAMDAUDIO_H
 
 	#include "Arduino.h"
 	#include "Print.h"
 
-	#include <SdFat.h>
 	#include <SPI.h>
 
 
 	//**********************************
 
-
-	//#define N_CHANNELS          1     //could be 1,2 or 4
-
 	// defines the max number of channels that this device can handle
 	#define MAX_N_CHANNELS		  4
 
-	#define AUDIO_BUFFER_SIZE   512
+	#define MAX_AUDIO_BUFFER_SIZE 1024 // value can be set in the sketch AUIDO_BUFFER_SIZE
+
 	#define RAMPIN              255
 
 	//**********************************
@@ -43,7 +40,7 @@
 	public:
 
 		SamdAudio(){};
-		int begin(uint32_t sampleRate, uint8_t numOfChannels, uint8_t chipSelect);
+		int begin(uint32_t sampleRate, uint8_t numOfChannels, uint16_t audio_buffer_size);
 		void play(const char *fname, uint8_t channel) ;
 		//void play(const char *fname) ;
 		void stopChannel(uint8_t c);
@@ -52,8 +49,8 @@
 		void criticalON();
 		void criticalOFF();
 
-
 	private:
+
 		void dacConfigure(void);
 
 		//The first timer is used to feed the DAC with data every 1/sampleRate sec
