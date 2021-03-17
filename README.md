@@ -1,5 +1,8 @@
 ### Arduino Audio Library for Arduino SAMD21
 
+
+## Update... an Adafruit dependency Adafruit_SPIFlash_FatFs.h is not longer available... looked to some folks that have forked this repo like [gambalunga](https://github.com/Gambalunga/Audio_FeatherM0) who got it working using the updated Adafruit library.
+
 This polyphonic library allows you to play WAV files from SPI Flash and SD card to the 10bit DAC of a SAMD21 (Pin A0 on many boards). 
 Plays up to ~4 WAV files simultaneously.
 [![IMAGE ALT TEXT](https://github.com/hydronics2/SamdAudio/blob/master/screen_shot.JPG)](https://youtu.be/A0afENS1ev4 "Playing polyphonic")
